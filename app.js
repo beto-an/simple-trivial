@@ -29,10 +29,14 @@ const tabMatrix = document.getElementById("tab-matrix");
 const matrixBox = document.getElementById("correlation-matrix");
 const tabPersonal = document.getElementById("tab-personal");
 const personalStatsBox = document.getElementById("personal-stats");
+const tabClusters = document.getElementById("tab-clusters");
+const clustersBox = document.getElementById("cluster-stats");
 
 let people = [];        // { name: string, scores: (number|null)[] }
 let headerRow = [];     // first row of the CSV – used for location names
 let matrixOrder = [];   // indices into `people` for the correlation matrix ordering
+let cachedClusterAssignments = null;
+let cachedClusterK = null;
 
 // --- THEME LOGIC ---
 function updateThemeToggleUI(currentTheme) {
@@ -86,11 +90,13 @@ function showTab(which) {
     overallStats.style.display = "none";
     matrixBox.style.display = "none";
     if (personalStatsBox) personalStatsBox.style.display = "none";
+    if (clustersBox) clustersBox.style.display = "none";
 
     tabCompare.classList.remove("active");
     tabOverall.classList.remove("active");
     tabMatrix.classList.remove("active");
     if (tabPersonal) tabPersonal.classList.remove("active");
+    if (tabClusters) tabClusters.classList.remove("active");
 
     if (which === "overall") {
         overallStats.style.display = "block";
@@ -101,6 +107,9 @@ function showTab(which) {
     } else if (which === "personal") {
         if (personalStatsBox) personalStatsBox.style.display = "block";
         if (tabPersonal) tabPersonal.classList.add("active");
+    } else if (which === "clusters") {
+        if (clustersBox) clustersBox.style.display = "block";
+        if (tabClusters) tabClusters.classList.add("active");
     } else {
         correlationUI.style.display = "block";
         tabCompare.classList.add("active");
@@ -109,7 +118,7 @@ function showTab(which) {
 
 let matrixRendered = false;
 
-if (tabCompare && tabOverall && tabMatrix && tabPersonal) {
+if (tabCompare && tabOverall && tabMatrix && tabPersonal && tabClusters) {
     tabCompare.addEventListener("click", () => showTab("compare"));
 
     tabOverall.addEventListener("click", () => showTab("overall"));
@@ -126,9 +135,12 @@ if (tabCompare && tabOverall && tabMatrix && tabPersonal) {
         renderPersonalStats();   // default to first person
         showTab("personal");
     });
+
+    tabClusters.addEventListener("click", () => {
+        renderClusters();
+        showTab("clusters");
+    });
 }
-
-
 
 // --- Robust CSV parser that handles quotes & commas ---
 function parseCSV(text) {
@@ -177,6 +189,302 @@ function parseCSV(text) {
         row.some(cell => String(cell).trim().length > 0)
     );
 }
+
+
+// --- CLUSTERING HELPERS ---
+// Build a normalized score vector for each person (imputing missing with their mean)
+function buildNormalizedVectors() {
+    if (!people.length) return [];
+
+    const numLocations = people[0].scores.length;
+    const vectors = [];
+
+    for (const person of people) {
+        const vals = person.scores.slice();
+
+        // compute mean over non-null entries
+        let sum = 0;
+        let count = 0;
+        for (const v of vals) {
+            if (v !== null) {
+                sum += v;
+                count++;
+            }
+        }
+        const mean = count > 0 ? sum / count : 0;
+
+        // impute missing with mean, then normalize
+        let sum2 = 0;
+        const filled = new Array(numLocations);
+        for (let i = 0; i < numLocations; i++) {
+            const v = vals[i] === null ? mean : vals[i];
+            filled[i] = v;
+            sum2 += v;
+        }
+        const mu = sum2 / numLocations;
+        let varAcc = 0;
+        for (let i = 0; i < numLocations; i++) {
+            const d = filled[i] - mu;
+            varAcc += d * d;
+        }
+        const std = Math.sqrt(varAcc / numLocations) || 1;
+
+        const norm = filled.map(v => (v - mu) / std);
+        vectors.push(norm);
+    }
+    return vectors;
+}
+
+// Simple k-means on normalized vectors
+function kMeansCluster(vectors, k) {
+    const n = vectors.length;
+    if (!n || k <= 0) return { assignments: [], centroids: [] };
+
+    const dim = vectors[0].length;
+    k = Math.min(k, n);
+
+    // init centroids: first k people
+    const centroids = [];
+    for (let c = 0; c < k; c++) {
+        centroids.push(vectors[c].slice());
+    }
+
+    const assignments = new Array(n).fill(0);
+
+    function distance2(a, b) {
+        let s = 0;
+        for (let i = 0; i < dim; i++) {
+            const d = a[i] - b[i];
+            s += d * d;
+        }
+        return s;
+    }
+
+    const MAX_ITERS = 25;
+    for (let iter = 0; iter < MAX_ITERS; iter++) {
+        // assign
+        let changed = false;
+        for (let i = 0; i < n; i++) {
+            let bestC = 0;
+            let bestD = Infinity;
+            for (let c = 0; c < k; c++) {
+                const d = distance2(vectors[i], centroids[c]);
+                if (d < bestD) {
+                    bestD = d;
+                    bestC = c;
+                }
+            }
+            if (assignments[i] !== bestC) {
+                assignments[i] = bestC;
+                changed = true;
+            }
+        }
+
+        // recompute centroids
+        const sums = Array.from({ length: k }, () => new Array(dim).fill(0));
+        const counts = new Array(k).fill(0);
+        for (let i = 0; i < n; i++) {
+            const c = assignments[i];
+            const v = vectors[i];
+            counts[c]++;
+            for (let d = 0; d < dim; d++) {
+                sums[c][d] += v[d];
+            }
+        }
+
+        for (let c = 0; c < k; c++) {
+            if (counts[c] === 0) continue; // leave centroid as is
+            for (let d = 0; d < dim; d++) {
+                centroids[c][d] = sums[c][d] / counts[c];
+            }
+        }
+
+        if (!changed) break;
+    }
+
+    return { assignments, centroids };
+}
+
+// Compute per-cluster favourite & least favourite locations
+function computeClusterLocationExtremes(assignments, k) {
+    if (!people.length) return [];
+    const numLocations = people[0].scores.length;
+
+    const result = [];
+    for (let c = 0; c < k; c++) {
+        const memberIdxs = [];
+        for (let i = 0; i < assignments.length; i++) {
+            if (assignments[i] === c) memberIdxs.push(i);
+        }
+        if (!memberIdxs.length) {
+            result.push({
+                cluster: c,
+                members: [],
+                favourite: null,
+                leastFavourite: null
+            });
+            continue;
+        }
+
+        // average score per location for this cluster
+        const locStats = [];
+        for (let loc = 0; loc < numLocations; loc++) {
+            let sum = 0;
+            let count = 0;
+            for (const idx of memberIdxs) {
+                const v = people[idx].scores[loc];
+                if (v !== null) {
+                    sum += v;
+                    count++;
+                }
+            }
+            if (count > 0) {
+                locStats.push({
+                    idx: loc,
+                    name: getLocationName(loc),
+                    mean: sum / count,
+                    count
+                });
+            }
+        }
+
+        if (!locStats.length) {
+            result.push({
+                cluster: c,
+                members: memberIdxs.map(i => people[i].name),
+                favourite: null,
+                leastFavourite: null
+            });
+            continue;
+        }
+
+        locStats.sort((a, b) => b.mean - a.mean);
+        const favourite = locStats[0];
+        const leastFavourite = locStats[locStats.length - 1];
+
+        result.push({
+            cluster: c,
+            members: memberIdxs.map(i => people[i].name),
+            favourite,
+            leastFavourite
+        });
+    }
+
+    return result;
+}
+
+function computeClustersOnce() {
+    if (!people.length) return null;
+
+    if (cachedClusterAssignments) {
+        return {
+            assignments: cachedClusterAssignments,
+            k: cachedClusterK
+        };
+    }
+
+    const vectors = buildNormalizedVectors();
+    const k = 3;
+    const { assignments } = kMeansCluster(vectors, k);
+
+    cachedClusterAssignments = assignments;
+    cachedClusterK = k;
+
+    return { assignments, k };
+}
+
+function getPersonClusterLabel(personIdx) {
+    const clusterInfo = computeClustersOnce();
+    if (!clusterInfo) return null;
+
+    const c = clusterInfo.assignments[personIdx];
+    if (c == null) return null;
+
+    return `${c + 1}`;
+}
+
+
+// Render the Clusters tab
+function renderClusters() {
+    if (!clustersBox || !people.length) return;
+
+    if (people.length < 2) {
+        clustersBox.innerHTML = `
+          <h2 style="margin-top:0; margin-bottom:0.5rem;">Clusters</h2>
+          <p class="description" style="margin-top:0;">
+            Not enough people to form clusters.
+          </p>
+        `;
+        return;
+    }
+
+    const clusterInfo = computeClustersOnce();
+    if (!clusterInfo) return;
+
+    const { assignments, k } = clusterInfo;
+
+    const clusterSummaries = computeClusterLocationExtremes(assignments, k);
+
+    let html = `
+      <h2 style="margin-top:0; margin-bottom:0.5rem;">Clusters</h2>
+      <p class="description" style="margin-top:0;">
+        People are grouped into clusters based on their overall rating profiles
+        (using a simple k-means on normalized scores). For each cluster, we show
+        the favourite and least favourite locations based on the cluster's average scores.
+      </p>
+    `;
+
+    html += `<div style="margin-top:0.5rem;">`;
+
+    clusterSummaries.forEach((cl, idx) => {
+        const label = `Cluster ${idx + 1}`;
+        const members = cl.members || [];
+
+        html += `
+          <div style="margin-top:0.75rem;">
+            <strong>${label}</strong>
+            <ul style="margin-top:0.25rem; padding-left:1.2rem;">
+              <li>Members: ${members.length
+                ? members.join(", ")
+                : "<em>none assigned</em>"
+            }</li>
+        `;
+
+        if (cl.favourite) {
+            html += `
+              <li>
+                Favourite location:
+                ${cl.favourite.name}
+                (average ≈ ${cl.favourite.mean.toFixed(2)}).
+              </li>
+            `;
+        } else {
+            html += `<li>Favourite location: <em>not enough ratings</em></li>`;
+        }
+
+        if (cl.leastFavourite) {
+            html += `
+              <li>
+                Least favourite location:
+                ${cl.leastFavourite.name}
+                (average ≈ ${cl.leastFavourite.mean.toFixed(2)}).
+              </li>
+            `;
+        } else {
+            html += `<li>Least favourite location: <em>not enough ratings</em></li>`;
+        }
+
+        html += `
+            </ul>
+          </div>
+        `;
+    });
+
+    html += `</div>`;
+
+    clustersBox.innerHTML = html;
+}
+
 
 // --- OVERALL STATS HELPERS ---
 
@@ -234,6 +542,7 @@ function renderPersonalStats(selectedName) {
     const defaultName = selectedName || (people[0] && people[0].name);
     const personName = defaultName || "";
     const personIdx = people.findIndex(p => p.name === personName);
+    const clusterLabel = getPersonClusterLabel(personIdx);
     const person = people[personIdx];
 
     if (!person) {
@@ -305,6 +614,9 @@ function renderPersonalStats(selectedName) {
           <li>Average score: ${meanText} (σ ≈ ${stdText}).</li>
           <li>Score range: ${minText} to ${maxText}.</li>
     `;
+    if (clusterLabel) {
+        html += `<li>Cluster: ${clusterLabel}</li>`;
+    }
 
     if (fav) {
         html += `
@@ -352,8 +664,8 @@ function renderPersonalStats(selectedName) {
         const cls = corrClassFromR(m.r);
         const pillClass =
             cls === "positive" ? "pill-positive" :
-            cls === "negative" ? "pill-negative" :
-            "pill-neutral";
+                cls === "negative" ? "pill-negative" :
+                    "pill-neutral";
         return `${label}: <span class="pill ${pillClass}">${m.name} (${m.r.toFixed(3)}, ${m.overlap} locations)</span><br/>`;
     }
 
