@@ -1,5 +1,6 @@
 <!doctype html>
 <html lang="en" data-theme="light">
+
 <head>
   <meta charset="utf-8" />
   <title>Simple Trip Site</title>
@@ -262,6 +263,7 @@
       color: var(--accent-contrast);
       border-color: var(--accent);
     }
+
     /* Correlation matrix hover highlighting */
     .matrix-row-hover th,
     .matrix-row-hover td.corr-cell {
@@ -273,7 +275,62 @@
     }
 
     td.corr-cell {
-      cursor: pointer; /* also used for Matrix → Compare jump */
+      cursor: pointer;
+      /* also used for Matrix → Compare jump */
+    }
+
+    .rank-controls {
+      margin-top: 0.5rem;
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.75rem;
+      align-items: center;
+      font-size: 0.9rem;
+    }
+
+    .rank-controls label {
+      margin-top: 0;
+      font-weight: 500;
+    }
+
+    .rank-controls input[type="range"] {
+      flex: 1 1 160px;
+    }
+
+    .rank-controls input[type="number"] {
+      width: 80px;
+      padding: 0.25rem 0.5rem;
+      border-radius: 0.5rem;
+      border: 1px solid var(--card-border);
+      background: var(--card-bg);
+      color: var(--fg);
+    }
+
+    .rank-bar-track {
+      position: relative;
+      width: 100%;
+      height: 0.55rem;
+      border-radius: 999px;
+      background: var(--card-border);
+      overflow: hidden;
+    }
+
+    .rank-bar-fill-positive,
+    .rank-bar-fill-negative {
+      position: absolute;
+      top: 0;
+      left: 0;
+      height: 100%;
+    }
+
+    .rank-bar-fill-positive {
+      background: #16a34a;
+      /* green */
+    }
+
+    .rank-bar-fill-negative {
+      background: #dc2626;
+      /* red */
     }
 
     hr {
@@ -286,28 +343,35 @@
       body {
         padding: 1rem;
       }
+
       .card {
         padding: 1.25rem 1.5rem;
       }
+
       .card-header {
         flex-direction: column;
         align-items: flex-start;
       }
+
       /* NEW: keep tab bar inside the card on small screens */
       .tab-bar {
         width: 100%;
         flex-wrap: wrap;
       }
+
       .tab-btn {
-        flex: 1 1 calc(50% - 0.5rem); /* about 2 per row */
+        flex: 1 1 calc(50% - 0.5rem);
+        /* about 2 per row */
         text-align: center;
-        white-space: normal;          /* allow text to wrap instead of stretching */
+        white-space: normal;
+        /* allow text to wrap instead of stretching */
       }
     }
   </style>
 </head>
+
 <body>
-    <div class="card">
+  <div class="card">
     <div class="card-header">
       <div>
         <h1>Simple Trivial Selection Trends</h1>
@@ -329,6 +393,9 @@
       <button id="tab-overall" class="tab-btn" type="button">
         Overall statistics
       </button>
+      <button id="tab-ranking" class="tab-btn" type="button">
+        Custom ranking
+      </button>
       <button id="tab-matrix" class="tab-btn" type="button">
         Correlation matrix
       </button>
@@ -348,7 +415,7 @@
         <button id="compute-btn">Generate Comparison</button>
       </div>
       <div id="compute-status" class="status"></div>
-      
+
       <div id="result" class="result" style="display:none;"></div>
     </div>
 
@@ -356,10 +423,12 @@
     <div id="overall-stats" class="result" style="display:none;"></div>
     <div id="personal-stats" class="result" style="display:none;"></div>
     <div id="correlation-matrix" class="result" style="display:none;"></div>
+    <div id="custom-ranking" class="result" style="display:none;"></div>
     <div id="cluster-stats" class="result" style="display:none;"></div>
     <div id="load-status" class="status">Loading sheet…</div>
     <div class="debug" id="debug-info"></div>
   </div>
   <script src="./app.js" defer></script>
 </body>
+
 </html>

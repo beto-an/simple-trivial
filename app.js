@@ -29,6 +29,8 @@ const tabMatrix = document.getElementById("tab-matrix");
 const matrixBox = document.getElementById("correlation-matrix");
 const tabPersonal = document.getElementById("tab-personal");
 const personalStatsBox = document.getElementById("personal-stats");
+const tabRanking = document.getElementById("tab-ranking");
+const customRankingBox = document.getElementById("custom-ranking");
 const tabClusters = document.getElementById("tab-clusters");
 const clustersBox = document.getElementById("cluster-stats");
 
@@ -90,12 +92,14 @@ function showTab(which) {
     overallStats.style.display = "none";
     matrixBox.style.display = "none";
     if (personalStatsBox) personalStatsBox.style.display = "none";
+    if (customRankingBox) customRankingBox.style.display = "none";
     if (clustersBox) clustersBox.style.display = "none";
 
     tabCompare.classList.remove("active");
     tabOverall.classList.remove("active");
     tabMatrix.classList.remove("active");
     if (tabPersonal) tabPersonal.classList.remove("active");
+    if (tabRanking) tabRanking.classList.remove("active");
     if (tabClusters) tabClusters.classList.remove("active");
 
     if (which === "overall") {
@@ -107,6 +111,9 @@ function showTab(which) {
     } else if (which === "personal") {
         if (personalStatsBox) personalStatsBox.style.display = "block";
         if (tabPersonal) tabPersonal.classList.add("active");
+    } else if (which === "ranking") {
+        if (customRankingBox) customRankingBox.style.display = "block";
+        if (tabRanking) tabRanking.classList.add("active");
     } else if (which === "clusters") {
         if (clustersBox) clustersBox.style.display = "block";
         if (tabClusters) tabClusters.classList.add("active");
@@ -116,9 +123,13 @@ function showTab(which) {
     }
 }
 
-let matrixRendered = false;
 
-if (tabCompare && tabOverall && tabMatrix && tabPersonal && tabClusters) {
+let matrixRendered = false;
+const MAX_EXPONENT = 8;          // hard-coded max exponent n
+let currentExponent = 2;         // default exponent
+let customRankingInitialized = false;
+
+if (tabCompare && tabOverall && tabMatrix && tabPersonal && tabRanking && tabClusters) {
     tabCompare.addEventListener("click", () => showTab("compare"));
 
     tabOverall.addEventListener("click", () => showTab("overall"));
@@ -134,6 +145,11 @@ if (tabCompare && tabOverall && tabMatrix && tabPersonal && tabClusters) {
     tabPersonal.addEventListener("click", () => {
         renderPersonalStats();   // default to first person
         showTab("personal");
+    });
+
+    tabRanking.addEventListener("click", () => {
+        renderCustomRanking();   // initializes controls & renders
+        showTab("ranking");
     });
 
     tabClusters.addEventListener("click", () => {
@@ -188,6 +204,231 @@ function parseCSV(text) {
     return rows.filter(row =>
         row.some(cell => String(cell).trim().length > 0)
     );
+}
+
+function renderCustomRanking() {
+    if (!customRankingBox) return;
+
+    if (!people.length) {
+        customRankingBox.innerHTML = `
+          <h2 style="margin-top:0; margin-bottom:0.5rem;">Custom ranking</h2>
+          <p class="description" style="margin-top:0;">
+            No data loaded yet. Once the sheet loads, this tab will rank locations
+            using a custom exponent.
+          </p>
+        `;
+        return;
+    }
+
+    if (!customRankingInitialized) {
+        customRankingBox.innerHTML = `
+          <h2 style="margin-top:0; margin-bottom:0.5rem;">Custom ranking</h2>
+          <p class="description" style="margin-top:0;">
+            Each location receives a score based on everyone&apos;s rank values:
+            <code>score(location) = Σ sign(rank) · |rank|<sup>exponent</sup></code>.
+            Use the slider or numeric input to adjust the exponent and see how
+            the ranking and dispersion change.
+          </p>
+
+          <div class="rank-controls">
+            <label for="rank-exp-slider">
+              Exponent
+            </label>
+            <input
+              id="rank-exp-slider"
+              type="range"
+              min="0"
+              max="${MAX_EXPONENT}"
+              step="0.1"
+            />
+            <input
+              id="rank-exp-input"
+              type="number"
+              min="0"
+              max="${MAX_EXPONENT}"
+              step="0.1"
+            />
+          </div>
+
+          <div style="margin-top:0.75rem; font-size:0.85rem; color:var(--muted-soft);">
+            <ul style="margin:0.25rem 0 0.5rem; padding-left:1.2rem;">
+              <li>Exponent 0 treats every non-zero rank as ±1 (only the sign matters).</li>
+              <li>Higher exponents emphasize strong opinions (large |rank|) more.</li>
+            </ul>
+          </div>
+
+          <div style="margin-top:0.75rem; overflow-x:auto;">
+            <table style="
+              border-collapse: collapse;
+              width: 100%;
+              font-size: 0.9rem;
+              min-width: 480px;
+            ">
+              <thead>
+                <tr>
+                  <th style="text-align:left; padding:0.35rem; border-bottom:1px solid var(--card-border);">
+                    Rank
+                  </th>
+                  <th style="text-align:left; padding:0.35rem; border-bottom:1px solid var(--card-border);">
+                    Location
+                  </th>
+                  <th style="text-align:right; padding:0.35rem; border-bottom:1px solid var(--card-border);">
+                    Score
+                  </th>
+                  <th style="text-align:right; padding:0.35rem; border-bottom:1px solid var(--card-border);">
+                    Std. dev. of contributions
+                  </th>
+                  <th style="text-align:left; padding:0.35rem; border-bottom:1px solid var(--card-border);">
+                    Visual
+                  </th>
+                </tr>
+              </thead>
+              <tbody id="custom-ranking-rows">
+              </tbody>
+            </table>
+          </div>
+        `;
+
+        const slider = customRankingBox.querySelector("#rank-exp-slider");
+        const input = customRankingBox.querySelector("#rank-exp-input");
+
+        if (slider && input) {
+            slider.value = String(currentExponent);
+            input.value = String(currentExponent);
+
+            // Slider: live updates as you drag
+            slider.addEventListener("input", (e) => {
+                const val = Number(e.target.value);
+                if (!Number.isNaN(val)) {
+                    currentExponent = Math.min(Math.max(val, 0), MAX_EXPONENT);
+                    input.value = currentExponent.toFixed(1);
+                    updateCustomRankingResults();
+                }
+            });
+
+            // Numeric input: clamp on change
+            input.addEventListener("change", (e) => {
+                let val = Number(e.target.value);
+                if (Number.isNaN(val)) {
+                    val = currentExponent;
+                }
+                val = Math.min(Math.max(val, 0), MAX_EXPONENT);
+                currentExponent = val;
+                input.value = currentExponent.toFixed(1);
+                slider.value = String(currentExponent);
+                updateCustomRankingResults();
+            });
+        }
+
+        customRankingInitialized = true;
+    }
+
+    // Always recompute when the tab is opened (in case people/ratings changed)
+    updateCustomRankingResults();
+}
+
+
+function updateCustomRankingResults() {
+    if (!customRankingBox || !people.length) return;
+
+    const tbody = customRankingBox.querySelector("#custom-ranking-rows");
+    if (!tbody) return;
+
+    const exponent = currentExponent;
+    const numLocations = people[0].scores.length;
+
+    const locStats = [];
+    let maxAbsScore = 0;
+
+    for (let locIdx = 0; locIdx < numLocations; locIdx++) {
+        const contributions = [];
+
+        for (const p of people) {
+            const v = p.scores[locIdx];
+            if (v === null) continue;
+
+            const sign = Math.sign(v);
+            const mag = Math.pow(Math.abs(v), exponent);
+            const contrib = sign * mag;
+
+            contributions.push(contrib);
+        }
+
+        if (!contributions.length) continue;
+
+        const count = contributions.length;
+        const sum = contributions.reduce((s, v) => s + v, 0);
+        const mean = sum / count;
+        const variance = contributions.reduce((s, v) => s + (v - mean) * (v - mean), 0) / count;
+        const std = Math.sqrt(Math.max(variance, 0));
+
+        locStats.push({
+            index: locIdx,
+            name: getLocationName(locIdx),
+            score: sum,
+            std,
+            count
+        });
+
+        const absScore = Math.abs(sum);
+        if (absScore > maxAbsScore) {
+            maxAbsScore = absScore;
+        }
+    }
+
+    if (!locStats.length) {
+        tbody.innerHTML = `
+          <tr>
+            <td colspan="5" style="padding:0.5rem; text-align:center; color:var(--muted-soft);">
+              No locations have any valid scores.
+            </td>
+          </tr>
+        `;
+        return;
+    }
+
+    // Sort descending by custom score
+    locStats.sort((a, b) => b.score - a.score);
+
+    const rows = [];
+    for (let rank = 0; rank < locStats.length; rank++) {
+        const loc = locStats[rank];
+        const widthPct = maxAbsScore > 0
+            ? (Math.abs(loc.score) / maxAbsScore) * 100
+            : 0;
+        const isPositive = loc.score >= 0;
+        const barClass = isPositive
+            ? "rank-bar-fill-positive"
+            : "rank-bar-fill-negative";
+
+        rows.push(`
+          <tr>
+            <td style="padding:0.35rem; border-bottom:1px solid var(--card-border);">
+              ${rank + 1}
+            </td>
+            <td style="padding:0.35rem; border-bottom:1px solid var(--card-border);">
+              ${loc.name}
+            </td>
+            <td style="padding:0.35rem; text-align:right; border-bottom:1px solid var(--card-border);">
+              ${loc.score.toFixed(3)}
+            </td>
+            <td style="padding:0.35rem; text-align:right; border-bottom:1px solid var(--card-border);">
+              ${Number.isFinite(loc.std) ? loc.std.toFixed(3) : "—"}
+            </td>
+            <td style="padding:0.35rem; border-bottom:1px solid var(--card-border); min-width:120px;">
+              <div class="rank-bar-track">
+                <div
+                  class="${barClass}"
+                  style="width:${widthPct}%;"
+                  title="${loc.score.toFixed(3)}"
+                ></div>
+              </div>
+            </td>
+          </tr>
+        `);
+    }
+
+    tbody.innerHTML = rows.join("");
 }
 
 
