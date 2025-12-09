@@ -237,7 +237,7 @@
       background: #4b5563;
       color: #f9fafb;
     }
-    
+
     .tab-bar {
       display: flex;
       gap: 0.5rem;
@@ -303,6 +303,9 @@
       <button id="tab-overall" class="tab-btn" type="button">
         Overall statistics
       </button>
+      <button id="tab-matrix" class="tab-btn" type="button">
+        Correlation matrix
+      </button>
     </div>
 
     <div id="correlation-ui" style="display:none;">
@@ -316,13 +319,13 @@
         <button id="compute-btn">Generate Comparison</button>
       </div>
       <div id="compute-status" class="status"></div>
-
+      
       <div id="result" class="result" style="display:none;"></div>
     </div>
 
     <!-- NEW: Overall stats panel (starts hidden, filled by JS) -->
     <div id="overall-stats" class="result" style="display:none;"></div>
-
+    <div id="correlation-matrix" class="result" style="display:none;"></div>
     <div id="load-status" class="status">Loading sheet…</div>
     <div class="debug" id="debug-info"></div>
   </div>
