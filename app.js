@@ -305,7 +305,7 @@ function kMeansCluster(vectors, k) {
     return { assignments, centroids };
 }
 
-// Compute per-cluster favourite & least favourite locations
+// Compute per-cluster favorite & least favorite locations
 function computeClusterLocationExtremes(assignments, k) {
     if (!people.length) return [];
     const numLocations = people[0].scores.length;
@@ -320,8 +320,8 @@ function computeClusterLocationExtremes(assignments, k) {
             result.push({
                 cluster: c,
                 members: [],
-                favourite: null,
-                leastFavourite: null
+                favorite: null,
+                leastFavorite: null
             });
             continue;
         }
@@ -352,21 +352,21 @@ function computeClusterLocationExtremes(assignments, k) {
             result.push({
                 cluster: c,
                 members: memberIdxs.map(i => people[i].name),
-                favourite: null,
-                leastFavourite: null
+                favorite: null,
+                leastFavorite: null
             });
             continue;
         }
 
         locStats.sort((a, b) => b.mean - a.mean);
-        const favourite = locStats[0];
-        const leastFavourite = locStats[locStats.length - 1];
+        const favorite = locStats[0];
+        const leastFavorite = locStats[locStats.length - 1];
 
         result.push({
             cluster: c,
             members: memberIdxs.map(i => people[i].name),
-            favourite,
-            leastFavourite
+            favorite,
+            leastFavorite
         });
     }
 
@@ -430,7 +430,7 @@ function renderClusters() {
       <p class="description" style="margin-top:0;">
         People are grouped into clusters based on their overall rating profiles
         (using a simple k-means on normalized scores). For each cluster, we show
-        the favourite and least favourite locations based on the cluster's average scores.
+        the favorite and least favorite locations based on the cluster's average scores.
       </p>
     `;
 
@@ -450,28 +450,28 @@ function renderClusters() {
             }</li>
         `;
 
-        if (cl.favourite) {
+        if (cl.favorite) {
             html += `
               <li>
-                Favourite location:
-                ${cl.favourite.name}
-                (average ≈ ${cl.favourite.mean.toFixed(2)}).
+                Favorite location:
+                ${cl.favorite.name}
+                (average ≈ ${cl.favorite.mean.toFixed(2)}).
               </li>
             `;
         } else {
-            html += `<li>Favourite location: <em>not enough ratings</em></li>`;
+            html += `<li>Favorite location: <em>not enough ratings</em></li>`;
         }
 
-        if (cl.leastFavourite) {
+        if (cl.leastFavorite) {
             html += `
               <li>
-                Least favourite location:
-                ${cl.leastFavourite.name}
-                (average ≈ ${cl.leastFavourite.mean.toFixed(2)}).
+                Least favorite location:
+                ${cl.leastFavorite.name}
+                (average ≈ ${cl.leastFavorite.mean.toFixed(2)}).
               </li>
             `;
         } else {
-            html += `<li>Least favourite location: <em>not enough ratings</em></li>`;
+            html += `<li>Least favorite location: <em>not enough ratings</em></li>`;
         }
 
         html += `
@@ -559,7 +559,7 @@ function renderPersonalStats(selectedName) {
     const stats = computePersonStats(person);
     const nRated = stats ? stats.n : 0;
 
-    // Favourite / least favourite locations for this person
+    // Favorite / least favorite locations for this person
     let fav = null;   // { name, score }
     let least = null; // { name, score }
     for (let i = 0; i < person.scores.length; i++) {
@@ -620,12 +620,12 @@ function renderPersonalStats(selectedName) {
 
     if (fav) {
         html += `
-          <li>Favourite location: ${fav.name} (score = ${fav.score}).</li>
+          <li>Favorite location: ${fav.name} (score = ${fav.score}).</li>
         `;
     }
     if (least) {
         html += `
-          <li>Least favourite location: ${least.name} (score = ${least.score}).</li>
+          <li>Least favorite location: ${least.name} (score = ${least.score}).</li>
         `;
     }
 
@@ -1982,7 +1982,7 @@ function computeCorrelation() {
     </strong><br/>
     <br/>
     Compared on <strong>${xs.length}</strong> locations where both provided a score.<br/>
-    This indicates <strong>${qualitative}</strong> similarity and your preferences are mostly <strong>${direction}</strong>.
+    Together, your scoring exhibits <strong>${qualitative}</strong> similarity and your preferences are mostly <strong>${direction}</strong>.
     ${explanationHtml}
     ${trendsHtml}
   `;
