@@ -712,169 +712,283 @@ function computeBestAndWorstFor(basePerson) {
 
 // --- MAIN COMPUTE ---
 function computeCorrelation() {
-    const nameA = personASelect.value;
-    const nameB = personBSelect.value;
+  const nameA = personASelect.value;
+  const nameB = personBSelect.value;
 
-    computeStatus.textContent = "";
-    resultBox.style.display = "none";
+  computeStatus.textContent = "";
+  resultBox.style.display = "none";
 
-    if (!nameA || !nameB) {
-        computeStatus.textContent = "Please choose both people.";
-        computeStatus.className = "status error";
-        return;
-    }
-    if (nameA === nameB) {
-        computeStatus.textContent = "Please choose two different people.";
-        computeStatus.className = "status error";
-        return;
-    }
+  if (!nameA || !nameB) {
+    computeStatus.textContent = "Please choose both people.";
+    computeStatus.className = "status error";
+    return;
+  }
+  if (nameA === nameB) {
+    computeStatus.textContent = "Please choose two different people.";
+    computeStatus.className = "status error";
+    return;
+  }
 
-    const personA = people.find(p => p.name === nameA);
-    const personB = people.find(p => p.name === nameB);
-    if (!personA || !personB) {
-        computeStatus.textContent = "Could not find one or both people in the dataset.";
-        computeStatus.className = "status error";
-        return;
-    }
+  const personA = people.find(p => p.name === nameA);
+  const personB = people.find(p => p.name === nameB);
+  if (!personA || !personB) {
+    computeStatus.textContent = "Could not find one or both people in the dataset.";
+    computeStatus.className = "status error";
+    return;
+  }
 
-    const xs = [];
-    const ys = [];
+  const xs = [];
+  const ys = [];
 
-    // For "same score" + disagreement
-    let topSameScore = null; // { score, location }
-    let maxDisagreement = null; // { diff, location }
+  // For "same score" + disagreement
+  let topSameScore = null;      // { score, location }
+  let maxDisagreement = null;   // { diff, location }
 
-    // For explanation stats
-    let sumAbsDiff = 0;
-    let sumDiff = 0;
+  // For explanation stats
+  let sumAbsDiff = 0;
+  let sumDiff = 0;
 
-    for (let i = 0; i < personA.scores.length; i++) {
-        const a = personA.scores[i];
-        const b = personB.scores[i];
-        if (a === null || b === null) continue;
+  // For agreement strength breakdown
+  let exactSameCount = 0;
+  let offBy1Count = 0;
+  let offBy2Count = 0;
+  let diff3PlusCount = 0;
 
-        xs.push(a);
-        ys.push(b);
+  // For representative / compromise logic – keep metadata aligned with xs/ys
+  const overlapDetails = [];    // [{ index, a, b, location }]
 
-        // Track largest-magnitude same score
-        if (a === b) {
-            if (
-                !topSameScore ||
-                Math.abs(a) > Math.abs(topSameScore.score)
-            ) {
-                topSameScore = {
-                    score: a,
-                    location: getLocationName(i),
-                };
-            }
-        }
+  // First pass: gather overlaps & simple stats
+  for (let i = 0; i < personA.scores.length; i++) {
+    const a = personA.scores[i];
+    const b = personB.scores[i];
+    if (a === null || b === null) continue;
 
-        // Largest disagreement where signs differ or one is zero
-        const signA = Math.sign(a);
-        const signB = Math.sign(b);
-        const signsOppositeOrZero =
-            (signA === 0 || signB === 0 || signA === -signB) && a !== b;
+    const locationName = getLocationName(i);
 
-        if (signsOppositeOrZero) {
-            const diff = Math.abs(a - b);
-            if (!maxDisagreement || diff > maxDisagreement.diff) {
-                maxDisagreement = {
-                    diff,
-                    location: getLocationName(i),
-                };
-            }
-        }
+    xs.push(a);
+    ys.push(b);
+    overlapDetails.push({ index: i, a, b, location: locationName });
 
-        // For explanation bullets
-        sumAbsDiff += Math.abs(a - b);
-        sumDiff += (a - b); // positive => A rates higher
+    const absDiff = Math.abs(a - b);
+
+    // Track largest-magnitude same score
+    if (a === b) {
+      if (!topSameScore || Math.abs(a) > Math.abs(topSameScore.score)) {
+        topSameScore = {
+          score: a,
+          location: locationName,
+        };
+      }
     }
 
-    if (xs.length < 2) {
-        computeStatus.textContent =
-            `Not enough overlapping rated locations between ${nameA} and ${nameB} to compute a correlation (need at least 2).`;
-        computeStatus.className = "status error";
-        return;
+    // Largest disagreement where signs differ or one is zero
+    const signA = Math.sign(a);
+    const signB = Math.sign(b);
+    const signsOppositeOrZero =
+      (signA === 0 || signB === 0 || signA === -signB) && a !== b;
+
+    if (signsOppositeOrZero) {
+      const diff = Math.abs(a - b);
+      if (!maxDisagreement || diff > maxDisagreement.diff) {
+        maxDisagreement = {
+          diff,
+          location: locationName,
+        };
+      }
     }
 
-    const r = pearsonCorrelation(xs, ys);
-    if (!Number.isFinite(r)) {
-        computeStatus.textContent = "Could not compute a valid correlation.";
-        computeStatus.className = "status error";
-        return;
+    // For explanation bullets
+    sumAbsDiff += absDiff;
+    sumDiff += (a - b); // positive => A rates higher
+
+    // Agreement-strength buckets
+    if (absDiff === 0) {
+      exactSameCount++;
+    } else if (absDiff === 1) {
+      offBy1Count++;
+    } else if (absDiff === 2) {
+      offBy2Count++;
+    } else if (absDiff >= 3) {
+      diff3PlusCount++;
     }
+  }
 
-    const rounded = r.toFixed(3);
-    const absR = Math.abs(r);
+  if (xs.length < 2) {
+    computeStatus.textContent =
+      `Not enough overlapping rated locations between ${nameA} and ${nameB} to compute a correlation (need at least 2).`;
+    computeStatus.className = "status error";
+    return;
+  }
 
-    let qualitative;
-    if (absR < 0.2) qualitative = "very weak";
-    else if (absR < 0.4) qualitative = "weak";
-    else if (absR < 0.6) qualitative = "moderate";
-    else if (absR < 0.8) qualitative = "strong";
-    else qualitative = "very strong";
+  const r = pearsonCorrelation(xs, ys);
+  if (!Number.isFinite(r)) {
+    computeStatus.textContent = "Could not compute a valid correlation.";
+    computeStatus.className = "status error";
+    return;
+  }
 
-    const signWord = r >= 0 ? "positive" : "negative";
-    const correlationPhrase = `${qualitative} ${signWord} correlation`;
+  const rounded = r.toFixed(3);
+  const absR = Math.abs(r);
 
-    const direction = r >= 0 ? "aligned" : "opposite";
+  let qualitative;
+  if (absR < 0.2) qualitative = "very weak";
+  else if (absR < 0.4) qualitative = "weak";
+  else if (absR < 0.6) qualitative = "moderate";
+  else if (absR < 0.8) qualitative = "strong";
+  else qualitative = "very strong";
 
-    // --- Explanation stats (relative movement) ---
-    const n = xs.length;
-    const meanA = xs.reduce((s, v) => s + v, 0) / n;
-    const meanB = ys.reduce((s, v) => s + v, 0) / n;
+  const signWord = r >= 0 ? "positive" : "negative";
+  const correlationPhrase = `${qualitative} ${signWord} correlation`;
 
-    let sameDirCount = 0;
-    let oppDirCount = 0;
+  const direction = r >= 0 ? "aligned" : "opposite";
 
-    for (let i = 0; i < n; i++) {
-        const da = xs[i] - meanA;
-        const db = ys[i] - meanB;
-        if (da === 0 || db === 0) continue;
+  // --- Explanation stats (relative movement) ---
+  const n = xs.length;
+  const meanA = xs.reduce((s, v) => s + v, 0) / n;
+  const meanB = ys.reduce((s, v) => s + v, 0) / n;
 
-        const prod = da * db;
-        if (prod > 0) sameDirCount++;
-        else if (prod < 0) oppDirCount++;
+  let sameDirCount = 0;
+  let oppDirCount = 0;
+
+  // For "Most representative location" (largest contribution to the correlation)
+  let mostRep = null; // { location, a, b, contribution }
+
+  for (let i = 0; i < n; i++) {
+    const da = xs[i] - meanA;
+    const db = ys[i] - meanB;
+    const prod = da * db;
+
+    if (prod > 0) sameDirCount++;
+    else if (prod < 0) oppDirCount++;
+
+    // Signed contribution aligned with overall r
+    const signedContribution = r >= 0 ? prod : -prod;
+    const meta = overlapDetails[i];
+
+    if (!mostRep || signedContribution > mostRep.contribution) {
+      mostRep = {
+        contribution: signedContribution,
+        location: meta?.location ?? `Location ${i + 1}`,
+        a: meta?.a ?? xs[i],
+        b: meta?.b ?? ys[i],
+      };
     }
+  }
 
-    const dirPairs = sameDirCount + oppDirCount;
-    let movePercent = 0;
-    let moveWord = r >= 0 ? "the same direction" : "opposite directions";
+  const dirPairs = sameDirCount + oppDirCount;
+  let movePercent = 0;
+  let moveWord = r >= 0 ? "the same direction" : "opposite directions";
 
-    if (dirPairs > 0) {
-        const base =
-            r >= 0 ? sameDirCount : oppDirCount;
-        movePercent = Math.round(100 * (base / dirPairs));
+  if (dirPairs > 0) {
+    const base = r >= 0 ? sameDirCount : oppDirCount;
+    movePercent = Math.round(100 * (base / dirPairs));
+  }
+
+  const avgAbsDiff = sumAbsDiff / n;
+  const avgDiff = sumDiff / n; // >0 => A higher, <0 => B higher
+
+  // --- Polarization index (share of locations where you move in opposite directions) ---
+  const oppShare = dirPairs > 0 ? (oppDirCount / dirPairs) : 0;
+  const polarizationPct = Math.round(oppShare * 100);
+  let polarizationLabel = "low";
+  if (oppShare >= 0.5) polarizationLabel = "high";
+  else if (oppShare >= 0.25) polarizationLabel = "medium";
+
+  // --- Agreement-strength percentages ---
+  const exactPct = Math.round((exactSameCount / n) * 100);
+  const offBy1Pct = Math.round((offBy1Count / n) * 100);
+  const offBy2Pct = Math.round((offBy2Count / n) * 100);
+  const diff3PlusPct = Math.round((diff3PlusCount / n) * 100);
+
+  // --- "If you had to compromise…" recommendation ---
+  let compromise = null; // { location, a, b, absDiff, avg }
+  for (const meta of overlapDetails) {
+    const absDiff = Math.abs(meta.a - meta.b);
+    const avgScore = (meta.a + meta.b) / 2;
+
+    if (
+      !compromise ||
+      absDiff < compromise.absDiff - 1e-9 ||
+      (Math.abs(absDiff - compromise.absDiff) < 1e-9 && avgScore > compromise.avg)
+    ) {
+      compromise = {
+        location: meta.location,
+        a: meta.a,
+        b: meta.b,
+        absDiff,
+        avg: avgScore,
+      };
     }
+  }
 
-    const avgAbsDiff = sumAbsDiff / n;
-    const avgDiff = sumDiff / n; // >0 => A higher, <0 => B higher
+  // --- Build Trends (including new items) ---
+  let trendsHtml = "";
 
-    // --- Build trends (using only largest-magnitude same score) ---
-    let trendsHtml = "";
+  if (n > 0) {
+    trendsHtml += `<hr/><div style="margin-top:0.75rem;"><strong>Trends</strong><br/>`;
 
-    if (topSameScore || maxDisagreement) {
-        trendsHtml += `<hr/><div style="margin-top:0.75rem;"><strong>Trends</strong><br/>`;
-
-        if (topSameScore) {
-            trendsHtml += `
+    // Largest-magnitude same score
+    if (topSameScore) {
+      trendsHtml += `
         <div>You and ${nameB} both put the score ${topSameScore.score} for ${topSameScore.location}.</div>
       `;
-        }
+    }
 
-        if (maxDisagreement) {
-            trendsHtml += `
+    // Largest disagreement
+    if (maxDisagreement) {
+      trendsHtml += `
         <div style="margin-top:0.5rem;">
           You and ${nameB} disagree the most about ${maxDisagreement.location}.
         </div>
       `;
-        }
-
-        trendsHtml += `</div>`;
     }
 
-    // --- Explanation block with bullets ---
-    let explanationHtml = `
+    // Polarization index
+    trendsHtml += `
+      <div style="margin-top:0.5rem;">
+        <strong>Polarization index:</strong> ${polarizationPct}% (${polarizationLabel} – share of locations where you move in opposite directions relative to your usual scores).
+      </div>
+    `;
+
+    // Agreement strength breakdown
+    trendsHtml += `
+      <div style="margin-top:0.5rem;">
+        <strong>Agreement strength breakdown</strong>
+        <ul style="margin-top:0.25rem; padding-left:1.2rem;">
+          <li>${exactPct}% of locations: exact same score</li>
+          <li>${offBy1Pct}%: differ by 1 point</li>
+          <li>${offBy2Pct}%: differ by 2 points</li>
+          <li>${diff3PlusPct}%: differ by 3+ points</li>
+        </ul>
+      </div>
+    `;
+
+    // Most representative location
+    if (mostRep) {
+      trendsHtml += `
+        <div style="margin-top:0.5rem;">
+          <strong>Most representative location:</strong> ${mostRep.location}
+          (you rated it ${mostRep.a}, and ${nameB} rated it ${mostRep.b}, contributing strongly to this ${signWord} correlation).
+        </div>
+      `;
+    }
+
+    // If you had to compromise…
+    if (compromise) {
+      trendsHtml += `
+        <div style="margin-top:0.5rem;">
+          <strong>If you had to compromise…</strong>
+          A fair pick might be <em>${compromise.location}</em>, where your scores are closest
+          (average ≈ ${compromise.avg.toFixed(2)} across both of you).
+        </div>
+      `;
+    }
+
+    trendsHtml += `</div>`;
+  }
+
+  // --- Explanation block with bullets (unchanged structure, but now coexists with new trends) ---
+  let explanationHtml = `
     <div style="margin-top:0.75rem;">
       <strong>Why this correlation?</strong>
       <div>The correlation is a ${correlationPhrase}.</div>
@@ -883,55 +997,56 @@ function computeCorrelation() {
         <li>Your scores are usually within ~${avgAbsDiff.toFixed(2)} points of each other.</li>
   `;
 
-    if (Math.abs(avgDiff) >= 0.05) {
-        if (avgDiff > 0) {
-            explanationHtml += `
+  if (Math.abs(avgDiff) >= 0.05) {
+    if (avgDiff > 0) {
+      explanationHtml += `
         <li>${nameA} tends to rate locations higher than ${nameB} (by about ${avgDiff.toFixed(2)} points on average).</li>
       `;
-        } else {
-            explanationHtml += `
+    } else {
+      explanationHtml += `
         <li>${nameB} tends to rate locations higher than ${nameA} (by about ${Math.abs(avgDiff).toFixed(2)} points on average).</li>
       `;
-        }
-    } else {
-        explanationHtml += `
+    }
+  } else {
+    explanationHtml += `
       <li>On average, you both rate locations at about the same level.</li>
     `;
-    }
+  }
 
-    explanationHtml += `
+  explanationHtml += `
       </ul>
     </div>
   `;
 
-    // Best / worst match for Person A
-    const { best, worst } = computeBestAndWorstFor(personA);
+  // Best / worst match for Person A (unchanged)
+  const { best, worst } = computeBestAndWorstFor(personA);
 
-    let matchesHtml = "<hr /><div class=\"matches-section\">";
-    matchesHtml += `<strong>Matches for ${nameA}</strong><br/>`;
+  let matchesHtml = "<hr /><div class=\"matches-section\">";
+  matchesHtml += `<strong>Matches for ${nameA}</strong><br/>`;
 
-    function matchLine(label, m) {
-        if (!m) return `${label}: <span class="pill pill-neutral">no valid match</span><br/>`;
-        const cls = corrClassFromR(m.r);
-        const pillClass =
-            cls === "positive" ? "pill-positive" :
-                cls === "negative" ? "pill-negative" :
-                    "pill-neutral";
-        return `${label}: <span class="pill ${pillClass}">${m.name} (${m.r.toFixed(3)}, ${m.overlap} locations)</span><br/>`;
-    }
+  function matchLine(label, m) {
+    if (!m) return `${label}: <span class="pill pill-neutral">no valid match</span><br/>`;
+    const cls = corrClassFromR(m.r);
+    const pillClass =
+      cls === "positive" ? "pill-positive" :
+      cls === "negative" ? "pill-negative" :
+      "pill-neutral";
+    return `${label}: <span class="pill ${pillClass}">${m.name} (${m.r.toFixed(3)}, ${m.overlap} locations)</span><br/>`;
+  }
 
-    matchesHtml += matchLine("Best match", best);
-    matchesHtml += matchLine("Worst match", worst);
-    matchesHtml += "</div>";
+  matchesHtml += matchLine("Best match", best);
+  matchesHtml += matchLine("Worst match", worst);
+  matchesHtml += "</div>";
 
-    // Correlation header (number + short summary)
-    resultBox.innerHTML = `
+  // Correlation header (number + short summary)
+  resultBox.innerHTML = `
     <strong>
       Correlation between ${nameA} and ${nameB}:
-      <span class="corr-number ${r > 0.25 ? "corr-positive" :
-            r < -0.25 ? "corr-negative" :
-                "corr-neutral"
-        }">${rounded}</span>
+      <span class="corr-number ${
+        r > 0.25 ? "corr-positive" :
+        r < -0.25 ? "corr-negative" :
+        "corr-neutral"
+      }">${rounded}</span>
     </strong><br/>
     <br/>
     Compared on <strong>${xs.length}</strong> locations where both provided a score.<br/>
@@ -940,8 +1055,8 @@ function computeCorrelation() {
     ${trendsHtml}
     ${matchesHtml}
   `;
-    resultBox.style.display = "block";
-    computeStatus.textContent = "";
+  resultBox.style.display = "block";
+  computeStatus.textContent = "";
 }
 
 computeBtn.addEventListener("click", computeCorrelation);
