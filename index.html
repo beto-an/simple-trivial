@@ -261,7 +261,19 @@
       color: var(--accent-contrast);
       border-color: var(--accent);
     }
+    /* Correlation matrix hover highlighting */
+    .matrix-row-hover th,
+    .matrix-row-hover td.corr-cell {
+      box-shadow: inset 0 0 0 9999px rgba(148, 163, 184, 0.12);
+    }
 
+    .matrix-col-hover {
+      outline: 2px solid rgba(148, 163, 184, 0.7);
+    }
+
+    td.corr-cell {
+      cursor: pointer; /* also used for Matrix → Compare jump */
+    }
 
     hr {
       border: none;
@@ -300,6 +312,9 @@
       <button id="tab-compare" class="tab-btn active" type="button">
         Compare people
       </button>
+      <button id="tab-personal" class="tab-btn" type="button">
+        Individual statistics
+      </button>
       <button id="tab-overall" class="tab-btn" type="button">
         Overall statistics
       </button>
@@ -325,6 +340,7 @@
 
     <!-- NEW: Overall stats panel (starts hidden, filled by JS) -->
     <div id="overall-stats" class="result" style="display:none;"></div>
+    <div id="personal-stats" class="result" style="display:none;"></div>
     <div id="correlation-matrix" class="result" style="display:none;"></div>
     <div id="load-status" class="status">Loading sheet…</div>
     <div class="debug" id="debug-info"></div>

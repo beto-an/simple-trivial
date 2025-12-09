@@ -27,9 +27,12 @@ const tabOverall = document.getElementById("tab-overall");
 const overallStats = document.getElementById("overall-stats");
 const tabMatrix = document.getElementById("tab-matrix");
 const matrixBox = document.getElementById("correlation-matrix");
+const tabPersonal = document.getElementById("tab-personal");
+const personalStatsBox = document.getElementById("personal-stats");
 
 let people = [];        // { name: string, scores: (number|null)[] }
 let headerRow = [];     // first row of the CSV – used for location names
+let matrixOrder = [];   // indices into `people` for the correlation matrix ordering
 
 // --- THEME LOGIC ---
 function updateThemeToggleUI(currentTheme) {
@@ -82,10 +85,12 @@ function showTab(which) {
     correlationUI.style.display = "none";
     overallStats.style.display = "none";
     matrixBox.style.display = "none";
+    if (personalStatsBox) personalStatsBox.style.display = "none";
 
     tabCompare.classList.remove("active");
     tabOverall.classList.remove("active");
     tabMatrix.classList.remove("active");
+    if (tabPersonal) tabPersonal.classList.remove("active");
 
     if (which === "overall") {
         overallStats.style.display = "block";
@@ -93,6 +98,9 @@ function showTab(which) {
     } else if (which === "matrix") {
         matrixBox.style.display = "block";
         tabMatrix.classList.add("active");
+    } else if (which === "personal") {
+        if (personalStatsBox) personalStatsBox.style.display = "block";
+        if (tabPersonal) tabPersonal.classList.add("active");
     } else {
         correlationUI.style.display = "block";
         tabCompare.classList.add("active");
@@ -101,7 +109,7 @@ function showTab(which) {
 
 let matrixRendered = false;
 
-if (tabCompare && tabOverall && tabMatrix) {
+if (tabCompare && tabOverall && tabMatrix && tabPersonal) {
     tabCompare.addEventListener("click", () => showTab("compare"));
 
     tabOverall.addEventListener("click", () => showTab("overall"));
@@ -113,7 +121,13 @@ if (tabCompare && tabOverall && tabMatrix) {
         }
         showTab("matrix");
     });
+
+    tabPersonal.addEventListener("click", () => {
+        renderPersonalStats();   // default to first person
+        showTab("personal");
+    });
 }
+
 
 
 // --- Robust CSV parser that handles quotes & commas ---
@@ -165,6 +179,204 @@ function parseCSV(text) {
 }
 
 // --- OVERALL STATS HELPERS ---
+
+
+// Compute: for a given person index, which location are they most different
+// from the rest of the group (by |score - others' mean|)?
+function computeMostDifferentLocation(personIdx) {
+    const person = people[personIdx];
+    if (!person) return null;
+
+    const numLocations = person.scores.length;
+    let best = null; // { index, location, diff, selfScore, groupMean, count }
+
+    for (let idx = 0; idx < numLocations; idx++) {
+        const v = person.scores[idx];
+        if (v === null) continue;
+
+        let sum = 0;
+        let count = 0;
+
+        for (let j = 0; j < people.length; j++) {
+            if (j === personIdx) continue;
+            const w = people[j].scores[idx];
+            if (w !== null) {
+                sum += w;
+                count++;
+            }
+        }
+
+        if (count === 0) continue;
+
+        const groupMean = sum / count;
+        const diff = Math.abs(v - groupMean);
+
+        if (!best || diff > best.diff) {
+            best = {
+                index: idx,
+                location: getLocationName(idx),
+                diff,
+                selfScore: v,
+                groupMean,
+                count
+            };
+        }
+    }
+
+    return best;
+}
+
+// Render the Personal stats tab for a given person name.
+// If no name is provided, defaults to the first person.
+function renderPersonalStats(selectedName) {
+    if (!personalStatsBox || !people.length) return;
+
+    const defaultName = selectedName || (people[0] && people[0].name);
+    const personName = defaultName || "";
+    const personIdx = people.findIndex(p => p.name === personName);
+    const person = people[personIdx];
+
+    if (!person) {
+        personalStatsBox.innerHTML = `
+          <h2 style="margin-top:0; margin-bottom:0.5rem;">Personal stats</h2>
+          <p class="description" style="margin-top:0;">
+            No people found in the dataset.
+          </p>
+        `;
+        return;
+    }
+
+    // Basic stats
+    const stats = computePersonStats(person);
+    const nRated = stats ? stats.n : 0;
+
+    // Favourite / least favourite locations for this person
+    let fav = null;   // { name, score }
+    let least = null; // { name, score }
+    for (let i = 0; i < person.scores.length; i++) {
+        const v = person.scores[i];
+        if (v === null) continue;
+        const locName = getLocationName(i);
+
+        if (!fav || v > fav.score) {
+            fav = { name: locName, score: v };
+        }
+        if (!least || v < least.score) {
+            least = { name: locName, score: v };
+        }
+    }
+
+    // Location where they are most different from the rest of the group
+    const mostDiff = computeMostDifferentLocation(personIdx);
+
+    // Best / worst match vs others (moved from Compare tab)
+    const { best, worst } = computeBestAndWorstFor(person);
+
+    const meanText = stats ? stats.mean.toFixed(2) : "—";
+    const stdText = stats ? stats.std.toFixed(2) : "—";
+    const minText = stats ? stats.min : "—";
+    const maxText = stats ? stats.max : "—";
+
+    // Build HTML
+    let html = `
+      <h2 style="margin-top:0; margin-bottom:0.5rem;">Personal stats</h2>
+      <p class="description" style="margin-top:0;">
+        View how one person compares to the rest of the group.
+      </p>
+
+      <label for="personal-person-select">Choose a person</label>
+      <select id="personal-person-select" style="margin-top:0.25rem;">
+    `;
+
+    for (const p of people) {
+        const sel = p.name === person.name ? "selected" : "";
+        html += `<option value="${p.name}" ${sel}>${p.name}</option>`;
+    }
+
+    html += `
+      </select>
+
+      <hr/>
+
+      <div style="margin-top:0.6rem;">
+        <strong>Summary for ${person.name}</strong>
+        <ul style="margin-top:0.4rem; padding-left:1.2rem;">
+          <li>Rated ${nRated} locations.</li>
+          <li>Average score: ${meanText} (σ ≈ ${stdText}).</li>
+          <li>Score range: ${minText} to ${maxText}.</li>
+    `;
+
+    if (fav) {
+        html += `
+          <li>Favourite location: ${fav.name} (score = ${fav.score}).</li>
+        `;
+    }
+    if (least) {
+        html += `
+          <li>Least favourite location: ${least.name} (score = ${least.score}).</li>
+        `;
+    }
+
+    html += `</ul>
+      </div>
+    `;
+
+    // Most different from group
+    if (mostDiff) {
+        html += `
+          <hr/>
+          <div style="margin-top:0.6rem;">
+            <strong>Where ${person.name} is most different</strong>
+            <p style="margin-top:0.4rem; margin-bottom:0.4rem;">
+              Location: <em>${mostDiff.location}</em><br/>
+              ${person.name}'s score: ${mostDiff.selfScore}<br/>
+              Group average (others only): ${mostDiff.groupMean.toFixed(2)} (based on ${mostDiff.count} others)<br/>
+              Absolute difference: ${mostDiff.diff.toFixed(2)} points.
+            </p>
+          </div>
+        `;
+    }
+
+    // Matches for this person
+    html += `
+      <hr/>
+      <div style="margin-top:0.6rem;">
+        <strong>Matches for ${person.name}</strong>
+        <div style="margin-top:0.4rem;">
+    `;
+
+    function matchLine(label, m) {
+        if (!m) {
+            return `${label}: <span class="pill pill-neutral">no valid match</span><br/>`;
+        }
+        const cls = corrClassFromR(m.r);
+        const pillClass =
+            cls === "positive" ? "pill-positive" :
+            cls === "negative" ? "pill-negative" :
+            "pill-neutral";
+        return `${label}: <span class="pill ${pillClass}">${m.name} (${m.r.toFixed(3)}, ${m.overlap} locations)</span><br/>`;
+    }
+
+    html += matchLine("Best match", best);
+    html += matchLine("Worst match", worst);
+
+    html += `
+        </div>
+      </div>
+    `;
+
+    personalStatsBox.innerHTML = html;
+
+    // Wire up select change → re-render for chosen person
+    const selEl = personalStatsBox.querySelector("#personal-person-select");
+    if (selEl) {
+        selEl.addEventListener("change", (e) => {
+            const newName = e.target.value;
+            renderPersonalStats(newName);
+        });
+    }
+}
+
 
 function computePersonStats(person) {
     const vals = person.scores.filter(v => v !== null);
@@ -243,6 +455,7 @@ function computePolarizationExtremes() {
 }
 
 // Signed squared sum = Σ (score * |score|) over everyone for each location
+// Signed squared sum = Σ (score * |score|) over everyone for each location
 function computeLocationSignedSquaredSums() {
     if (!people.length) return null;
     const numLocations = people[0].scores.length;
@@ -252,21 +465,33 @@ function computeLocationSignedSquaredSums() {
     for (let idx = 0; idx < numLocations; idx++) {
         let signedSquaredSum = 0;
         let count = 0;
+        let sum = 0;
+        let sumSq = 0;
 
         for (const p of people) {
             const v = p.scores[idx];
             if (v !== null) {
                 signedSquaredSum += v * Math.abs(v);
                 count++;
+                sum += v;
+                sumSq += v * v;
             }
         }
 
         if (count > 0) {
+            let consensus = null; // we'll use σ as a "consensus" proxy: lower = more agreement
+            if (count > 1) {
+                const mean = sum / count;
+                const variance = sumSq / count - mean * mean;
+                consensus = Math.sqrt(Math.max(variance, 0));
+            }
+
             locStats.push({
                 index: idx,
                 name: getLocationName(idx),
                 signedSquaredSum,
-                count
+                count,
+                consensus,   // standard deviation of scores for this location
             });
         }
     }
@@ -281,6 +506,7 @@ function computeLocationSignedSquaredSums() {
 
     return { best, worst, ranking: locStats };
 }
+
 
 
 function computeMostPolarizingLocation() {
@@ -315,17 +541,24 @@ function computeMostPolarizingLocation() {
     return best;
 }
 
-function computeCorrelationMatrix() {
-    const n = people.length;
+function computeCorrelationMatrix(order = matrixOrder) {
+    const n = order.length;
     const matrix = [];
 
     for (let i = 0; i < n; i++) {
+        const idxI = order[i];
         matrix[i] = [];
         for (let j = 0; j < n; j++) {
-            if (i === j) {
-                matrix[i][j] = { r: 1.0, overlap: people[i].scores.length };
+            const idxJ = order[j];
+
+            if (idxI === idxJ) {
+                // diagonal
+                matrix[i][j] = {
+                    r: 1.0,
+                    overlap: people[idxI].scores.length
+                };
             } else {
-                const { xs, ys } = buildOverlap(people[i], people[j]);
+                const { xs, ys } = buildOverlap(people[idxI], people[idxJ]);
                 if (xs.length < 2) {
                     matrix[i][j] = { r: null, overlap: xs.length };
                 } else {
@@ -341,6 +574,107 @@ function computeCorrelationMatrix() {
     return matrix;
 }
 
+function sortMatrixByPerson(personIdx) {
+    const n = people.length;
+    const corrs = [];
+
+    for (let j = 0; j < n; j++) {
+        if (j === personIdx) {
+            corrs.push({ idx: j, r: 1.0 });
+            continue;
+        }
+
+        const { xs, ys } = buildOverlap(people[personIdx], people[j]);
+        if (xs.length < 2) {
+            corrs.push({ idx: j, r: null });
+        } else {
+            const r = pearsonCorrelation(xs, ys);
+            corrs.push({
+                idx: j,
+                r: Number.isFinite(r) ? r : null
+            });
+        }
+    }
+
+    // Sort: clicked person first, then others by descending correlation,
+    // with "no data" (null) at the end.
+    corrs.sort((a, b) => {
+        if (a.idx === personIdx && b.idx === personIdx) return 0;
+        if (a.idx === personIdx) return -1;
+        if (b.idx === personIdx) return 1;
+
+        const ra = a.r;
+        const rb = b.r;
+
+        if (ra === null && rb === null) return 0;
+        if (ra === null) return 1;
+        if (rb === null) return -1;
+
+        return rb - ra; // descending by r
+    });
+
+    matrixOrder = corrs.map(c => c.idx);
+    renderCorrelationMatrix();
+}
+
+function attachMatrixSortHandlers() {
+    if (!matrixBox) return;
+    const headers = matrixBox.querySelectorAll("thead th[data-person-idx]");
+
+    headers.forEach(th => {
+        const idx = Number(th.getAttribute("data-person-idx"));
+        if (Number.isNaN(idx)) return;
+
+        th.style.cursor = "pointer";
+        const existingTitle = th.getAttribute("title") || "";
+        const hint = existingTitle ? existingTitle + " – " : "";
+        th.setAttribute("title", hint + "click header to sort by this person");
+
+        // Click on the header background / name → sort by that person
+        th.addEventListener("click", (e) => {
+            // If the click came from a reorder button, ignore here
+            if (e.target.closest(".reorder-btn")) return;
+            sortMatrixByPerson(idx);
+        });
+
+        // Wire the tiny left/right buttons for manual reordering
+        const leftBtn = th.querySelector(".reorder-left");
+        const rightBtn = th.querySelector(".reorder-right");
+
+        if (leftBtn) {
+            leftBtn.addEventListener("click", (e) => {
+                e.stopPropagation(); // don’t also trigger sort
+                movePersonInOrder(idx, -1);
+            });
+        }
+
+        if (rightBtn) {
+            rightBtn.addEventListener("click", (e) => {
+                e.stopPropagation();
+                movePersonInOrder(idx, +1);
+            });
+        }
+    });
+}
+
+
+function movePersonInOrder(personIdx, direction) {
+    // direction: -1 = move left, +1 = move right
+    const currPos = matrixOrder.indexOf(personIdx);
+    if (currPos === -1) return;
+
+    const newPos = currPos + direction;
+    if (newPos < 0 || newPos >= matrixOrder.length) return;
+
+    const tmp = matrixOrder[currPos];
+    matrixOrder[currPos] = matrixOrder[newPos];
+    matrixOrder[newPos] = tmp;
+
+    // Re-render with updated ordering
+    renderCorrelationMatrix();
+}
+
+
 function corrToBgColor(r) {
     if (r === null || !Number.isFinite(r)) return "transparent";
 
@@ -355,16 +689,21 @@ function corrToBgColor(r) {
     }
 }
 
-
 function renderCorrelationMatrix() {
     if (!matrixBox || !people.length) return;
 
-    const matrix = computeCorrelationMatrix();
+    const order = (matrixOrder.length === people.length)
+        ? matrixOrder
+        : people.map((_, idx) => idx);
+
+    const matrix = computeCorrelationMatrix(order);
 
     let html = `
       <h2 style="margin-top:0; margin-bottom:0.5rem;">Correlation matrix</h2>
       <p class="description" style="margin-top:0;">
         Pairwise Pearson correlations across all shared locations.
+        <br/>
+        Click a header to sort by that person, or click a cell to jump to the comparison view.
       </p>
 
       <div style="overflow-x:auto;">
@@ -378,27 +717,74 @@ function renderCorrelationMatrix() {
             <th style="padding:0.35rem; border-bottom:1px solid var(--card-border);"></th>
     `;
 
-    // Column headers
-    for (const p of people) {
+    // Column headers (clickable for sorting + left/right reordering)
+    for (let c = 0; c < order.length; c++) {
+        const pIndex = order[c];
+        const p = people[pIndex];
         html += `
-          <th style="padding:0.35rem; border-bottom:1px solid var(--card-border); text-align:center;">
-            ${p.name}
-          </th>
+        <th
+            data-person-idx="${pIndex}"
+            style="
+                padding:0.25rem 0.35rem;
+                border-bottom:1px solid var(--card-border);
+                text-align:center;
+                white-space:nowrap;
+            "
+        >
+            <div style="display:flex; align-items:center; justify-content:center; gap:0.25rem;">
+                <button
+                    type="button"
+                    class="reorder-btn reorder-left"
+                    data-person-idx="${pIndex}"
+                    style="
+                        border:none;
+                        background:transparent;
+                        color:var(--muted-soft);
+                        padding:0;
+                        cursor:pointer;
+                        font-size:0.7rem;
+                    "
+                    title="Move left"
+                >
+                    ◀
+                </button>
+                <span>${p.name}</span>
+                <button
+                    type="button"
+                    class="reorder-btn reorder-right"
+                    data-person-idx="${pIndex}"
+                    style="
+                        border:none;
+                        background:transparent;
+                        color:var(--muted-soft);
+                        padding:0;
+                        cursor:pointer;
+                        font-size:0.7rem;
+                    "
+                    title="Move right"
+                >
+                    ▶
+                </button>
+            </div>
+        </th>
         `;
     }
 
     html += `</tr></thead><tbody>`;
 
     // Rows
-    for (let i = 0; i < people.length; i++) {
+    for (let i = 0; i < order.length; i++) {
+        const rowIdx = order[i];
+        const rowPerson = people[rowIdx];
+
         html += `
           <tr>
             <th style="padding:0.35rem; border-right:1px solid var(--card-border); text-align:right;">
-              ${people[i].name}
+              ${rowPerson.name}
             </th>
         `;
 
-        for (let j = 0; j < people.length; j++) {
+        for (let j = 0; j < order.length; j++) {
             const cell = matrix[i][j];
 
             let content = "—";
@@ -411,12 +797,15 @@ function renderCorrelationMatrix() {
 
             html += `
                 <td
+                    class="corr-cell"
+                    data-row-pos="${i}"
+                    data-col-pos="${j}"
                     title="${cell.overlap} shared locations"
                     style="
-                    padding: 0.35rem;
-                    text-align: center;
-                    background-color: ${bg};
-                    border: 1px solid var(--card-border);
+                        padding: 0.35rem;
+                        text-align: center;
+                        background-color: ${bg};
+                        border: 1px solid var(--card-border);
                     "
                 >
                     ${content}
@@ -434,8 +823,108 @@ function renderCorrelationMatrix() {
     `;
 
     matrixBox.innerHTML = html;
+
+    // Make headers sortable & re-orderable
+    attachMatrixSortHandlers();
+    // NEW: make cells interactive (hover highlight + Matrix → Compare jump)
+    attachMatrixHoverHandlers();
+    attachMatrixCellHandlers();
 }
 
+// --- Hover highlight helpers ---
+
+function clearMatrixHover() {
+    if (!matrixBox) return;
+    matrixBox
+        .querySelectorAll(".matrix-row-hover, .matrix-col-hover")
+        .forEach(el => {
+            el.classList.remove("matrix-row-hover", "matrix-col-hover");
+        });
+}
+
+function highlightMatrixHover(rowPos, colPos) {
+    if (!matrixBox) return;
+    clearMatrixHover();
+
+    const rows = matrixBox.querySelectorAll("tbody tr");
+    rows.forEach((tr, i) => {
+        if (i === rowPos) {
+            tr.classList.add("matrix-row-hover");
+        }
+        const tds = tr.querySelectorAll("td.corr-cell");
+        tds.forEach((td, j) => {
+            if (j === colPos) {
+                td.classList.add("matrix-col-hover");
+            }
+        });
+    });
+
+    // Highlight corresponding column header
+    const headerRow = matrixBox.querySelector("thead tr");
+    if (headerRow) {
+        const headerCells = headerRow.querySelectorAll("th[data-person-idx]");
+        if (headerCells[colPos]) {
+            headerCells[colPos].classList.add("matrix-col-hover");
+        }
+    }
+}
+
+function attachMatrixHoverHandlers() {
+    if (!matrixBox) return;
+    const cells = matrixBox.querySelectorAll("td.corr-cell");
+
+    cells.forEach(cell => {
+        const rowPos = Number(cell.getAttribute("data-row-pos"));
+        const colPos = Number(cell.getAttribute("data-col-pos"));
+
+        cell.addEventListener("mouseenter", () => {
+            if (!Number.isNaN(rowPos) && !Number.isNaN(colPos)) {
+                highlightMatrixHover(rowPos, colPos);
+            }
+        });
+
+        cell.addEventListener("mouseleave", () => {
+            clearMatrixHover();
+        });
+    });
+}
+
+// --- Matrix → Compare jump (click a cell to go to Compare tab) ---
+
+function attachMatrixCellHandlers() {
+    if (!matrixBox) return;
+    const cells = matrixBox.querySelectorAll("td.corr-cell");
+
+    cells.forEach(cell => {
+        cell.addEventListener("click", () => {
+            const rowPos = Number(cell.getAttribute("data-row-pos"));
+            const colPos = Number(cell.getAttribute("data-col-pos"));
+            if (
+                Number.isNaN(rowPos) ||
+                Number.isNaN(colPos) ||
+                rowPos === colPos ||
+                !matrixOrder.length
+            ) {
+                return;
+            }
+
+            // Map matrix positions → actual people indices
+            const idxA = matrixOrder[colPos];
+            const idxB = matrixOrder[rowPos];
+            const personA = people[idxA];
+            const personB = people[idxB];
+            if (!personA || !personB) return;
+
+            // Set dropdowns in Compare UI
+            personASelect.value = personA.name;
+            personBSelect.value = personB.name;
+
+            // Jump to Compare tab and immediately run the comparison
+            showTab("compare");
+            computeCorrelation();
+        });
+    });
+}
 
 function renderOverallStats() {
     if (!overallStats || !people.length) return;
@@ -629,12 +1118,17 @@ function renderOverallStats() {
                     <th style="text-align:right; padding:0.35rem; border-bottom:1px solid var(--card-border);">
                     Signed squared sum
                     </th>
+                    <th style="text-align:right; padding:0.35rem; border-bottom:1px solid var(--card-border);">
+                    Consensus (σ; lower = more agreement)
+                    </th>
                 </tr>
                 </thead>
                 <tbody>
         `;
         for (let i = 0; i < ranking.length; i++) {
             const loc = ranking[i];
+            const consensusText =
+                loc.consensus != null ? loc.consensus.toFixed(2) : "—";
             html += `
                 <tr>
                     <td style="padding:0.35rem; border-bottom:1px solid var(--card-border);">
@@ -645,6 +1139,9 @@ function renderOverallStats() {
                     </td>
                     <td style="padding:0.35rem; text-align:right; border-bottom:1px solid var(--card-border);">
                     ${loc.signedSquaredSum.toFixed(2)}
+                    </td>
+                    <td style="padding:0.35rem; text-align:right; border-bottom:1px solid var(--card-border);">
+                      ${consensusText}
                     </td>
                 </tr>
                 `;
@@ -707,6 +1204,10 @@ function loadSheet() {
             if (people.length === 0) {
                 throw new Error("No people found in the expected name column.");
             }
+
+            // NEW: reset matrix ordering to the natural order
+            matrixOrder = people.map((_, idx) => idx);
+            matrixRendered = false;
 
             populateSelects();
             loadStatus.textContent = `Loaded ${people.length} people from sheet.`;
@@ -1158,27 +1659,6 @@ function computeCorrelation() {
       </ul>
     </div>
   `;
-
-    // Best / worst match for Person A (unchanged)
-    const { best, worst } = computeBestAndWorstFor(personA);
-
-    let matchesHtml = "<hr /><div class=\"matches-section\">";
-    matchesHtml += `<strong>Matches for ${nameA}</strong><br/>`;
-
-    function matchLine(label, m) {
-        if (!m) return `${label}: <span class="pill pill-neutral">no valid match</span><br/>`;
-        const cls = corrClassFromR(m.r);
-        const pillClass =
-            cls === "positive" ? "pill-positive" :
-                cls === "negative" ? "pill-negative" :
-                    "pill-neutral";
-        return `${label}: <span class="pill ${pillClass}">${m.name} (${m.r.toFixed(3)}, ${m.overlap} locations)</span><br/>`;
-    }
-
-    matchesHtml += matchLine("Best match", best);
-    matchesHtml += matchLine("Worst match", worst);
-    matchesHtml += "</div>";
-
     // Correlation header (number + short summary)
     resultBox.innerHTML = `
     <strong>
@@ -1193,7 +1673,6 @@ function computeCorrelation() {
     This indicates <strong>${qualitative}</strong> similarity and your preferences are mostly <strong>${direction}</strong>.
     ${explanationHtml}
     ${trendsHtml}
-    ${matchesHtml}
   `;
     resultBox.style.display = "block";
     computeStatus.textContent = "";
