@@ -1,0 +1,327 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Preference Correlation from Google Sheet</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <style>
+    body {
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      margin: 0;
+      padding: 2rem;
+      background: #f5f5f7;
+      color: #111827;
+    }
+    .card {
+      max-width: 800px;
+      margin: 0 auto;
+      background: #ffffff;
+      border-radius: 1rem;
+      padding: 1.5rem 2rem;
+      box-shadow: 0 12px 30px rgba(0,0,0,0.08);
+    }
+    h1 {
+      font-size: 1.6rem;
+      margin-bottom: 0.5rem;
+    }
+    p.description {
+      color: #4b5563;
+      margin-top: 0;
+      margin-bottom: 1.5rem;
+    }
+    label {
+      display: block;
+      margin-top: 1rem;
+      font-weight: 600;
+      font-size: 0.95rem;
+    }
+    select {
+      width: 100%;
+      padding: 0.5rem 0.75rem;
+      margin-top: 0.25rem;
+      border-radius: 0.5rem;
+      border: 1px solid #d1d5db;
+      font-size: 0.95rem;
+      box-sizing: border-box;
+    }
+    button {
+      margin-top: 1.5rem;
+      padding: 0.6rem 1.3rem;
+      border-radius: 999px;
+      border: none;
+      font-size: 0.95rem;
+      font-weight: 600;
+      cursor: pointer;
+      background: #2563eb;
+      color: #ffffff;
+    }
+    button:disabled {
+      opacity: 0.6;
+      cursor: default;
+    }
+    .status {
+      margin-top: 0.75rem;
+      font-size: 0.9rem;
+      color: #6b7280;
+    }
+    .result {
+      margin-top: 1.5rem;
+      padding: 1rem 1.25rem;
+      border-radius: 0.75rem;
+      background: #f9fafb;
+      border: 1px solid #e5e7eb;
+      font-size: 0.95rem;
+    }
+    .result strong {
+      font-size: 1.1rem;
+    }
+    .error {
+      color: #b91c1c;
+    }
+    .success {
+      color: #065f46;
+    }
+    .debug {
+      margin-top: 0.5rem;
+      font-size: 0.8rem;
+      color: #9ca3af;
+    }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <h1>Preference Correlation</h1>
+    <p class="description">
+      This tool reads a Google Sheet of people’s scores on locations (−3 to 3),
+      then computes how similar two people’s preferences are using a correlation score.
+    </p>
+
+    <div id="load-status" class="status"></div>
+
+    <div id="correlation-ui" style="display:none;">
+      <label for="person-a">Person A</label>
+      <select id="person-a"></select>
+
+      <label for="person-b">Person B</label>
+      <select id="person-b"></select>
+
+      <button id="compute-btn">Compute Correlation</button>
+      <div id="compute-status" class="status"></div>
+
+      <div id="result" class="result" style="display:none;"></div>
+    </div>
+
+    <div class="debug" id="debug-info"></div>
+  </div>
+
+  <script>
+    // Fetch via Cloudflare Pages Function proxy to avoid CORS
+    const CSV_URL = "/sheet";
+
+
+    // Column indices (0-based) after CSV parsing:
+    // A=0, B=1, C=2, D=3, E=4, F=5, ..., K=10
+    const NAME_COL_INDEX = 1;          // Column B (names in B2:B13)
+    const SCORE_START_COL_INDEX = 5;   // Column F
+    const SCORE_END_COL_INDEX = 10;    // Column K (inclusive)
+
+    const loadStatus = document.getElementById("load-status");
+    const debugInfo = document.getElementById("debug-info");
+
+    const correlationUI = document.getElementById("correlation-ui");
+    const personASelect = document.getElementById("person-a");
+    const personBSelect = document.getElementById("person-b");
+    const computeBtn = document.getElementById("compute-btn");
+    const computeStatus = document.getElementById("compute-status");
+    const resultBox = document.getElementById("result");
+
+    let people = []; // { name: string, scores: (number|null)[] }
+
+    // --- Simple CSV parser for this specific use case ---
+    function parseCSV(text) {
+      const lines = text.split(/\r?\n/).filter(line => line.trim().length > 0);
+      return lines.map(line => line.split(","));
+    }
+
+    function loadSheet() {
+      loadStatus.textContent = "Loading sheet…";
+      loadStatus.className = "status";
+
+      fetch(CSV_URL)
+        .then(resp => {
+          if (!resp.ok) {
+            throw new Error("Failed to fetch CSV: " + resp.status);
+          }
+          return resp.text();
+        })
+        .then(text => {
+          const rows = parseCSV(text);
+
+          // Assume first row is header; skip it.
+          const dataRows = rows.slice(1);
+
+          people = [];
+          for (const row of dataRows) {
+            if (row.length <= NAME_COL_INDEX) continue;
+
+            const rawName = (row[NAME_COL_INDEX] || "").trim();
+            if (!rawName) continue; // ignore empty names
+
+            const scores = [];
+            for (let c = SCORE_START_COL_INDEX; c <= SCORE_END_COL_INDEX; c++) {
+              let val = row[c];
+              if (val === undefined || val === null || String(val).trim() === "") {
+                scores.push(null); // missing score
+              } else {
+                const num = Number(val);
+                scores.push(Number.isFinite(num) ? num : null);
+              }
+            }
+
+            people.push({ name: rawName, scores });
+          }
+
+          if (people.length === 0) {
+            throw new Error("No people found in the expected name column.");
+          }
+
+          populateSelects();
+          loadStatus.textContent = `Loaded ${people.length} people from sheet.`;
+          loadStatus.className = "status success";
+          correlationUI.style.display = "block";
+
+          debugInfo.textContent = `Debug: Loaded ${people.length} people; score dimension = ${people[0].scores.length}.`;
+        })
+        .catch(err => {
+          console.error(err);
+          loadStatus.textContent = "Error: " + err.message;
+          loadStatus.className = "status error";
+        });
+    }
+
+    function populateSelects() {
+      personASelect.innerHTML = "";
+      personBSelect.innerHTML = "";
+
+      for (const p of people) {
+        const optA = document.createElement("option");
+        optA.value = p.name;
+        optA.textContent = p.name;
+        personASelect.appendChild(optA);
+
+        const optB = document.createElement("option");
+        optB.value = p.name;
+        optB.textContent = p.name;
+        personBSelect.appendChild(optB);
+      }
+
+      if (people.length >= 2) {
+        personASelect.selectedIndex = 0;
+        personBSelect.selectedIndex = 1;
+      }
+    }
+
+    function pearsonCorrelation(xs, ys) {
+      const n = xs.length;
+      if (n < 2) return NaN;
+
+      let sumX = 0, sumY = 0, sumXY = 0, sumX2 = 0, sumY2 = 0;
+      for (let i = 0; i < n; i++) {
+        const x = xs[i];
+        const y = ys[i];
+        sumX += x;
+        sumY += y;
+        sumXY += x * y;
+        sumX2 += x * x;
+        sumY2 += y * y;
+      }
+      const num = n * sumXY - sumX * sumY;
+      const den = Math.sqrt(
+        (n * sumX2 - sumX * sumX) *
+        (n * sumY2 - sumY * sumY)
+      );
+      if (den === 0) return NaN;
+      return num / den;
+    }
+
+    function computeCorrelation() {
+      const nameA = personASelect.value;
+      const nameB = personBSelect.value;
+
+      computeStatus.textContent = "";
+      resultBox.style.display = "none";
+
+      if (!nameA || !nameB) {
+        computeStatus.textContent = "Please choose both Person A and Person B.";
+        computeStatus.className = "status error";
+        return;
+      }
+      if (nameA === nameB) {
+        computeStatus.textContent = "Please choose two different people.";
+        computeStatus.className = "status error";
+        return;
+      }
+
+      const personA = people.find(p => p.name === nameA);
+      const personB = people.find(p => p.name === nameB);
+      if (!personA || !personB) {
+        computeStatus.textContent = "Could not find one or both people in the dataset.";
+        computeStatus.className = "status error";
+        return;
+      }
+
+      const xs = [];
+      const ys = [];
+      for (let i = 0; i < personA.scores.length; i++) {
+        const a = personA.scores[i];
+        const b = personB.scores[i];
+        if (a !== null && b !== null) {
+          xs.push(a);
+          ys.push(b);
+        }
+      }
+
+      if (xs.length < 2) {
+        computeStatus.textContent =
+          `Not enough overlapping rated locations between ${nameA} and ${nameB} to compute a correlation (need at least 2).`;
+        computeStatus.className = "status error";
+        return;
+      }
+
+      const r = pearsonCorrelation(xs, ys);
+      if (!Number.isFinite(r)) {
+        computeStatus.textContent = "Could not compute a valid correlation.";
+        computeStatus.className = "status error";
+        return;
+      }
+
+      const rounded = r.toFixed(3);
+      let qualitative;
+      const absR = Math.abs(r);
+      if (absR < 0.2) qualitative = "very weak similarity";
+      else if (absR < 0.4) qualitative = "weak similarity";
+      else if (absR < 0.6) qualitative = "moderate similarity";
+      else if (absR < 0.8) qualitative = "strong similarity";
+      else qualitative = "very strong similarity";
+
+      const direction = r >= 0 ? "aligned" : "opposite";
+
+      resultBox.innerHTML = `
+        <strong>Correlation between ${nameA} and ${nameB}: ${rounded}</strong><br/>
+        <br/>
+        Compared on <strong>${xs.length}</strong> locations where both provided a score.<br/>
+        This indicates <strong>${qualitative}</strong> and their preferences are mostly <strong>${direction}</strong>.
+      `;
+      resultBox.style.display = "block";
+      computeStatus.textContent = "";
+    }
+
+    // Auto-load the sheet on page load
+    window.addEventListener("DOMContentLoaded", () => {
+      loadSheet();
+    });
+
+    computeBtn.addEventListener("click", computeCorrelation);
+  </script>
+</body>
+</html>
