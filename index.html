@@ -237,6 +237,31 @@
       background: #4b5563;
       color: #f9fafb;
     }
+    
+    .tab-bar {
+      display: flex;
+      gap: 0.5rem;
+      margin-bottom: 0.75rem;
+    }
+
+    .tab-btn {
+      padding: 0.35rem 0.9rem;
+      border-radius: 999px;
+      border: 1px solid var(--card-border);
+      background: transparent;
+      color: var(--muted);
+      font-size: 0.85rem;
+      font-weight: 500;
+      cursor: pointer;
+      box-shadow: none;
+    }
+
+    .tab-btn.active {
+      background: var(--accent);
+      color: var(--accent-contrast);
+      border-color: var(--accent);
+    }
+
 
     hr {
       border: none;
@@ -259,7 +284,7 @@
   </style>
 </head>
 <body>
-  <div class="card">
+    <div class="card">
     <div class="card-header">
       <div>
         <h1>Simple Trivial Selection Trends</h1>
@@ -267,6 +292,16 @@
       <button id="theme-toggle" class="theme-toggle" type="button">
         <span id="theme-icon">🌙</span>
         <span id="theme-label">Dark</span>
+      </button>
+    </div>
+
+    <!-- NEW: Tab bar -->
+    <div class="tab-bar">
+      <button id="tab-compare" class="tab-btn active" type="button">
+        Compare people
+      </button>
+      <button id="tab-overall" class="tab-btn" type="button">
+        Overall statistics
       </button>
     </div>
 
@@ -284,6 +319,9 @@
 
       <div id="result" class="result" style="display:none;"></div>
     </div>
+
+    <!-- NEW: Overall stats panel (starts hidden, filled by JS) -->
+    <div id="overall-stats" class="result" style="display:none;"></div>
 
     <div id="load-status" class="status">Loading sheet…</div>
     <div class="debug" id="debug-info"></div>
