@@ -341,6 +341,21 @@ function computeCorrelationMatrix() {
     return matrix;
 }
 
+function corrToBgColor(r) {
+    if (r === null || !Number.isFinite(r)) return "transparent";
+
+    const alpha = Math.min(Math.abs(r), 1) * 0.35; // light intensity
+
+    if (r > 0) {
+        // light green
+        return `rgba(34, 197, 94, ${alpha})`;
+    } else {
+        // light red
+        return `rgba(239, 68, 68, ${alpha})`;
+    }
+}
+
+
 function renderCorrelationMatrix() {
     if (!matrixBox || !people.length) return;
 
@@ -387,22 +402,25 @@ function renderCorrelationMatrix() {
             const cell = matrix[i][j];
 
             let content = "—";
-            let cls = "corr-neutral";
+            let bg = "transparent";
 
             if (cell.r !== null) {
                 content = cell.r.toFixed(2);
-                cls =
-                    cell.r > 0.25 ? "corr-positive" :
-                        cell.r < -0.25 ? "corr-negative" :
-                            "corr-neutral";
+                bg = corrToBgColor(cell.r);
             }
 
             html += `
-              <td style="padding:0.35rem; text-align:center;">
-                <span class="corr-number ${cls}" title="${cell.overlap} shared locations">
-                  ${content}
-                </span>
-              </td>
+                <td
+                    title="${cell.overlap} shared locations"
+                    style="
+                    padding: 0.35rem;
+                    text-align: center;
+                    background-color: ${bg};
+                    border: 1px solid var(--card-border);
+                    "
+                >
+                    ${content}
+                </td>
             `;
         }
 
@@ -557,7 +575,7 @@ function renderOverallStats() {
           <li>
             Most polarizing location:
             ${mostPolar.name} &mdash; people disagree the most here
-            (σ ≈ ${mostPolar.std.toFixed(2)} across ${mostPolar.n} ratings).
+            (σ ≈ ${mostPolar.std.toFixed(2)}).
           </li>
         `;
         }
@@ -566,7 +584,7 @@ function renderOverallStats() {
           <li>
             Least polarizing location:
             ${leastPolar.name} &mdash; people are most in agreement here
-            (σ ≈ ${leastPolar.std.toFixed(2)} across ${leastPolar.n} ratings).
+            (σ ≈ ${leastPolar.std.toFixed(2)}).
           </li>
         `;
         }
@@ -585,11 +603,11 @@ function renderOverallStats() {
         <ul style="margin-top:0.4rem; padding-left:1.2rem;">
           <li>
             Highest-scoring location:
-            ${highLoc.name} (signed squared sum ≈ ${highLoc.signedSquaredSum.toFixed(2)}).
+            ${highLoc.name} (${highLoc.signedSquaredSum.toFixed(2)}).
           </li>
           <li>
             Lowest-scoring location:
-            ${lowLoc.name} (signed squared sum ≈ ${lowLoc.signedSquaredSum.toFixed(2)}).
+            ${lowLoc.name} (${lowLoc.signedSquaredSum.toFixed(2)}).
           </li>
         </ul>
         <details style="margin-top:0.6rem;">
